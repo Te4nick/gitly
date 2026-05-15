@@ -1,12 +1,12 @@
-module main
+module store
 
 import config
 import db.pg
 import os
 
-type GitlyDb = pg.DB
+pub type GitlyDb = pg.DB
 
-fn connect_db(conf config.Config) !GitlyDb {
+pub fn connect_db(conf config.Config) !GitlyDb {
 	if conninfo := first_env_opt(['GITLY_DB_CONNINFO', 'DATABASE_URL'], conf.pg.conninfo) {
 		return GitlyDb(pg.connect_with_conninfo(conninfo)!)
 	}
@@ -19,11 +19,11 @@ fn connect_db(conf config.Config) !GitlyDb {
 	)!)
 }
 
-fn db_backend_name() string {
+pub fn db_backend_name() string {
 	return 'postgres'
 }
 
-fn db_exec_values(db &GitlyDb, query string) ![][]string {
+pub fn db_exec_values(db &GitlyDb, query string) ![][]string {
 	rows := db.exec_no_null(query)!
 	mut values := [][]string{cap: rows.len}
 	for row in rows {
@@ -32,13 +32,13 @@ fn db_exec_values(db &GitlyDb, query string) ![][]string {
 	return values
 }
 
-fn db_column_exists(db &GitlyDb, table_name string, column_name string) !bool {
+pub fn db_column_exists(db &GitlyDb, table_name string, column_name string) !bool {
 	rows := db_exec_values(db,
 		'select column_name from information_schema.columns where table_name = ${sql_literal(table_name.to_lower())} and column_name = ${sql_literal(column_name)}')!
 	return rows.len > 0
 }
 
-fn db_bool_column_type() string {
+pub fn db_bool_column_type() string {
 	return 'BOOLEAN NOT NULL DEFAULT false'
 }
 

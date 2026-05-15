@@ -9,6 +9,7 @@ import validation
 import git
 import config
 import net.urllib
+import store
 
 const top_files_limit = 50
 
@@ -302,8 +303,8 @@ pub fn (mut app App) handle_new_repo(mut ctx Context, name string, clone_url str
 fn bg_fetch_files_info(repo_ Repo, branch string, path string, conf config.Config) {
 	mut repo := repo_
 	mut app := &App{
-		db:     connect_db(conf) or {
-			eprintln('cannot open ${db_backend_name()} db connection for bg_fetch thread: ${err}')
+		db:     store.connect_db(conf) or {
+			eprintln('cannot open ${store.db_backend_name()} db connection for bg_fetch thread: ${err}')
 			return
 		}
 		config: conf
@@ -325,8 +326,8 @@ fn clone_repo(mut new_repo Repo, conf config.Config) {
 	// Use a dedicated DB connection for the clone thread to avoid
 	// sharing a connection across threads.
 	mut app := &App{
-		db:     connect_db(conf) or {
-			eprintln('cannot open ${db_backend_name()} db connection for clone thread: ${err}')
+		db:     store.connect_db(conf) or {
+			eprintln('cannot open ${store.db_backend_name()} db connection for clone thread: ${err}')
 			return
 		}
 		config: conf

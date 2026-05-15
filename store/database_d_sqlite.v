@@ -1,17 +1,17 @@
-module main
+module store
 
 import config
 import db.sqlite
 import os
 
-type GitlyDb = sqlite.DB
+pub type GitlyDb = sqlite.DB
 
-fn connect_db(conf config.Config) !GitlyDb {
+pub fn connect_db(conf config.Config) !GitlyDb {
 	path := first_env(['GITLY_SQLITE_PATH', 'GITLY_DB_PATH'], conf.sqlite.path)
 	return GitlyDb(sqlite.connect(path)!)
 }
 
-fn db_backend_name() string {
+pub fn db_backend_name() string {
 	return 'sqlite'
 }
 
@@ -24,7 +24,7 @@ fn db_exec_values(db &GitlyDb, query string) ![][]string {
 	return values
 }
 
-fn db_column_exists(db &GitlyDb, table_name string, column_name string) !bool {
+pub fn db_column_exists(db &GitlyDb, table_name string, column_name string) !bool {
 	rows := db_exec_values(db, 'pragma table_info(${sql_table(table_name)})')!
 	for row in rows {
 		if row.len > 1 && row[1] == column_name {
@@ -34,7 +34,7 @@ fn db_column_exists(db &GitlyDb, table_name string, column_name string) !bool {
 	return false
 }
 
-fn db_bool_column_type() string {
+pub fn db_bool_column_type() string {
 	return 'INTEGER NOT NULL DEFAULT 0'
 }
 

@@ -9,6 +9,7 @@ import log
 import api
 import config
 import git
+import store
 
 const commits_per_page = 35
 const expire_length = 200
@@ -26,7 +27,7 @@ pub struct App {
 	veb.Middleware[Context]
 	started_at i64
 pub mut:
-	db GitlyDb
+	db store.GitlyDb
 mut:
 	version    string
 	logger     log.Log
@@ -59,7 +60,7 @@ fn new_app() !&App {
 
 	mut app := &App{
 		// db: sqlite.connect('gitly.sqlite') or { panic(err) }
-		db:         connect_db(conf)!
+		db:         store.connect_db(conf)!
 		config:     conf
 		started_at: time.now().unix()
 		clone_urls: map[int]string{}
@@ -268,16 +269,16 @@ fn (mut app App) create_tables() ! {
 }
 
 fn (mut app App) migrate_tables() ! {
-	app.add_missing_column('File', 'is_size_calculated', db_bool_column_type())!
-	app.add_missing_column('Settings', 'disable_tree_folder_size', db_bool_column_type())!
+	app.add_missing_column('File', 'is_size_calculated', store.db_bool_column_type())!
+	app.add_missing_column('Settings', 'disable_tree_folder_size', store.db_bool_column_type())!
 }
 
 fn (mut app App) add_missing_column(table_name string, column_name string, column_type string) ! {
-	if db_column_exists(app.db, table_name, column_name)! {
+	if store.db_column_exists(app.db, table_name, column_name)! {
 		return
 	}
 
-	app.db.exec('alter table ${sql_table(table_name)} add column ${sql_table(column_name)} ${column_type}')!
+	app.db.exec('alter table ${store.sql_table(table_name)} add column ${store.sql_table(column_name)} ${column_type}')!
 }
 
 fn (mut ctx Context) json_success[T](result T) veb.Result {

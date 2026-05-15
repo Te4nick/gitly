@@ -1,6 +1,7 @@
 module main
 
 import time
+import store
 
 // now only for commits
 struct FeedItem {
@@ -23,8 +24,8 @@ fn (mut app App) build_user_feed_as_page(user_id int, offset int) []FeedItem {
 	}
 	where_repo_ids := repo_ids.map(it.str()).join(', ')
 
-	commits := db_exec_values(app.db, '
-		select author, hash, created_at, repo_id, branch_id, message from ${sql_table('Commit')}
+	commits := store.db_exec_values(app.db, '
+		select author, hash, created_at, repo_id, branch_id, message from ${store.sql_table('Commit')}
 			where repo_id in (${where_repo_ids}) order by created_at desc
 			limit ${feed_items_per_page} offset ${offset}') or {
 		return []
@@ -70,8 +71,8 @@ fn (mut app App) get_feed_items_count(user_id int) int {
 	}
 	where_repo_ids := repo_ids.map(it.str()).join(', ')
 
-	count_result := db_exec_values(app.db,
-		'select count(id) from ${sql_table('Commit')} where repo_id in (${where_repo_ids})') or {
+	count_result := store.db_exec_values(app.db,
+		'select count(id) from ${store.sql_table('Commit')} where repo_id in (${where_repo_ids})') or {
 		return 0
 	}
 

@@ -1,4 +1,4 @@
-module main
+module store
 
 fn test_sql_table_quotes_identifiers() {
 	assert sql_table('Commit') == '"commit"'

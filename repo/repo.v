@@ -6,6 +6,7 @@ import os
 import time
 import git
 import highlight
+import store
 import validation
 
 struct Repo {
@@ -131,8 +132,8 @@ fn (mut app App) find_user_public_repos(user_id int) []Repo {
 }
 
 fn (app &App) search_public_repos(query string) []Repo {
-	repo_rows := db_exec_values(app.db,
-		'select id, name, user_id, description, stars_count from ${sql_table('Repo')} where is_public is true and name like ${sql_like_pattern(query)}') or {
+	repo_rows := store.db_exec_values(app.db,
+		'select id, name, user_id, description, stars_count from ${store.sql_table('Repo')} where is_public is true and name like ${store.sql_like_pattern(query)}') or {
 		return []
 	}
 
