@@ -4,5 +4,5 @@ Module {
 	version: '0.1.1'
 	license: 'GPL 3'
 	subdirs: ['admin', 'repo', 'commit', 'ci', 'security', 'ssh', 'user']
-	dependencies: []
+	dependencies: ['markdown']
 }

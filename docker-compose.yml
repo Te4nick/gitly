@@ -1,0 +1,43 @@
+services:
+  gitly:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      GITLY_PORT: 8080
+      GITLY_DB_HOST: postgres
+      GITLY_DB_PORT: 5432
+      GITLY_DB_NAME: gitly
+      GITLY_DB_USER: gitly
+      GITLY_DB_PASSWORD: gitly
+    volumes:
+      - gitly_repos:/app/repos
+      - gitly_archives:/app/archives
+      - gitly_avatars:/app/avatars
+      - gitly_logs:/app/logs
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gitly
+      POSTGRES_USER: gitly
+      POSTGRES_PASSWORD: gitly
+    volumes:
+      - gitly_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitly -d gitly"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  gitly_repos:
+  gitly_archives:
+  gitly_avatars:
+  gitly_logs:
+  gitly_postgres:
