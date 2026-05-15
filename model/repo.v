@@ -331,13 +331,6 @@ pub enum RepoStatus {
 	cloning      = 3
 }
 
-pub struct Label { // TODO: move to issue.v
-pub:
-	id    int
-	name  string
-	color string
-}
-
 pub struct LangStat {
 pub:
 	id          int    @[primary; sql: serial]

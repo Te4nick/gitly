@@ -2,14 +2,6 @@ import os
 import veb
 import config
 
-enum Lang {
-	en
-	ru
-}
-
-const tr_menu_en = '<select id=select_lang><option value=en selected>English</option><option value=ru>Русский</option></select>'
-const tr_menu_ru = '<select id=select_lang><option value=en>English</option><option value=ru selected>Русский</option></select>'
-
 fn get_port(conf config.Config) int {
 	// Priority: -p flag > GITLY_PORT env > config.json port > 8080
 	for i, arg in os.args {
@@ -44,9 +36,4 @@ fn main() {
 	) or { panic(err) }
 }
 
-fn build_tr_menu(cur_lang Lang) string {
-	return match cur_lang {
-		.ru { tr_menu_ru }
-		.en { tr_menu_en }
-	}
-}
+
