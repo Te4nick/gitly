@@ -9,7 +9,7 @@ pub fn (mut app App) user_feed_default(mut ctx Context, username string) veb.Res
 
 @['/:username/feed/:page']
 pub fn (mut app App) user_feed(mut ctx Context, username string, page string) veb.Result {
-	exists, user := app.check_username(username)
+	exists, user := app.service.user.check_username(username)
 
 	if !exists || ctx.user.username != user.username {
 		return ctx.not_found()

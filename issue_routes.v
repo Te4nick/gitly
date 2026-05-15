@@ -3,6 +3,7 @@ module main
 import veb
 import validation
 import api
+import model {User}
 
 struct ItemWithUser[T] {
 	item T
@@ -56,12 +57,12 @@ pub fn (mut app App) handle_add_repo_issue(mut ctx Context, username string, rep
 	if is_title_empty || is_text_empty {
 		return ctx.redirect('/${username}/${repo_name}/issues/new')
 	}
-	app.increment_user_post(mut ctx.user) or { app.info(err.str()) }
+	app.service.user.increment_user_post(mut ctx.user) or { app.info(err.str()) }
 	app.add_issue(repo.id, ctx.user.id, title, text) or { app.info(err.str()) }
 	app.increment_repo_issues(repo.id) or { app.info(err.str()) }
-	has_first_issue_activity := app.has_activity(ctx.user.id, 'first_issue')
+	has_first_issue_activity := app.service.activity.has_activity(ctx.user.id, 'first_issue')
 	if !has_first_issue_activity {
-		app.add_activity(ctx.user.id, 'first_issue') or { app.info(err.str()) }
+		app.service.activity.add_activity(ctx.user.id, 'first_issue') or { app.info(err.str()) }
 	}
 	return ctx.redirect('/${username}/${repo_name}/issues')
 }
@@ -82,7 +83,7 @@ pub fn (mut app App) issues(mut ctx Context, username string, repo_name string, 
 	mut i := 0
 	for i = 0; i < repo_issues.len; i++ {
 		issue = repo_issues[i]
-		user = app.get_user_by_id(issue.author_id) or { continue }
+		user = app.service.user.get_user_by_id(issue.author_id) or { continue }
 		issues_with_users << IssueWithUser{
 			item: issue
 			user: user
@@ -113,7 +114,7 @@ pub fn (mut app App) issues(mut ctx Context, username string, repo_name string, 
 pub fn (mut app App) issue(mut ctx Context, username string, repo_name string, id string) veb.Result {
 	repo := app.find_repo_by_name_and_username(repo_name, username) or { return ctx.not_found() }
 	issue := app.find_issue_by_id(id.int()) or { return ctx.not_found() }
-	issue_author := app.get_user_by_id(issue.author_id) or { return ctx.not_found() }
+	issue_author := app.service.user.get_user_by_id(issue.author_id) or { return ctx.not_found() }
 	mut comments_with_users := []CommentWithUser{}
 	mut comment := Comment{}
 	mut comment_author := User{}
@@ -121,7 +122,7 @@ pub fn (mut app App) issue(mut ctx Context, username string, repo_name string, i
 	mut i := 0
 	for i = 0; i < issue_comments.len; i++ {
 		comment = issue_comments[i]
-		comment_author = app.get_user_by_id(comment.author_id) or { continue }
+		comment_author = app.service.user.get_user_by_id(comment.author_id) or { continue }
 		comments_with_users << CommentWithUser{
 			item: comment
 			user: comment_author
@@ -138,7 +139,7 @@ pub fn (mut app App) user_issues(mut ctx Context, username string, page string) 
 	if ctx.user.username != username {
 		return ctx.not_found()
 	}
-	exists, user := app.check_username(username)
+	exists, user := app.service.user.check_username(username)
 	if !exists {
 		return ctx.not_found()
 	}
@@ -173,7 +174,7 @@ pub fn (mut app App) user_issues(mut ctx Context, username string, page string) 
 	mut issue_author := User{}
 	for i = 0; i < issues.len; i++ {
 		issue = issues[i]
-		issue_author = app.get_user_by_id(issue.author_id) or { continue }
+		issue_author = app.service.user.get_user_by_id(issue.author_id) or { continue }
 		issues_with_users << IssueWithUser{
 			item: issue
 			user: issue_author

@@ -2,71 +2,30 @@
 // Use of this source code is governed by a GPL license that can be found in the LICENSE file.
 module main
 
+import veb
 import os
 import time
 import git
 import highlight
+import model {Repo, RepoStatus, LangStat, File, User, Commit}
+import service {CommitService, UserService, WatchService}
 import store
 import validation
 
-struct Repo {
-	id                 int @[primary; sql: serial]
-	git_dir            string
-	name               string
-	user_id            int
-	user_name          string
-	clone_url          string @[skip]
-	primary_branch     string
-	description        string
-	is_public          bool
-	users_contributed  []string @[skip]
-	users_authorized   []string @[skip]
-	nr_topics          int      @[skip]
-	views_count        int
-	latest_update_hash string    @[skip]
-	latest_activity    time.Time @[skip]
-mut:
-	webhook_secret  string
-	tags_count      int
-	nr_open_issues  int @[orm: 'open_issues_count']
-	nr_open_prs     int @[orm: 'open_prs_count']
-	nr_releases     int @[orm: 'releases_count']
-	nr_branches     int @[orm: 'branches_count']
-	nr_tags         int
-	nr_stars        int        @[orm: 'stars_count']
-	lang_stats      []LangStat @[skip]
-	created_at      int
-	nr_contributors int
-	labels          []Label @[skip]
-	status          RepoStatus
-	msg_cache       map[string]string @[skip]
-}
 
 // log_field_separator is declared as constant in case we need to change it later
 const max_git_res_size = 1000
 const log_field_separator = '\x7F'
 const ignored_folder = ['thirdparty']
 
-enum RepoStatus {
-	done         = 0
-	caching      = 1
-	clone_failed = 2
-	cloning      = 3
+pub struct RepoService {
+	CommitService
+	UserService
+	WatchService
+	db store.GitlyDb
 }
 
-enum ArchiveFormat {
-	zip
-	tar
-}
-
-fn (f ArchiveFormat) str() string {
-	return match f {
-		.zip { 'zip' }
-		.tar { 'tar' }
-	}
-}
-
-fn (mut app App) save_repo(repo Repo) ! {
+fn (mut s RepoService) save_repo(repo Repo) ! {
 	id := repo.id
 	desc := repo.description
 	views_count := repo.views_count
@@ -83,7 +42,7 @@ fn (mut app App) save_repo(repo Repo) ! {
 	// XTODO sql update all fields automatically
 	// repo.update()
 
-	sql app.db {
+	sql s.db {
 		update Repo set description = desc, views_count = views_count, is_public = is_public,
 		webhook_secret = webhook_secret, tags_count = tags_count, nr_open_issues = open_issues_count,
 		nr_open_prs = open_prs_count, nr_releases = releases_count, nr_contributors = contributors_count,
@@ -91,8 +50,8 @@ fn (mut app App) save_repo(repo Repo) ! {
 	}!
 }
 
-fn (app App) find_repo_by_name_and_user_id(repo_name string, user_id int) ?Repo {
-	repos := sql app.db {
+fn (s RepoService) find_repo_by_name_and_user_id(repo_name string, user_id int) ?Repo {
+	repos := sql s.db {
 		select from Repo where name == repo_name && user_id == user_id limit 1
 	} or { return none }
 
@@ -101,38 +60,38 @@ fn (app App) find_repo_by_name_and_user_id(repo_name string, user_id int) ?Repo 
 	}
 
 	mut repo := repos[0]
-	repo.lang_stats = app.find_repo_lang_stats(repo.id)
+	repo.lang_stats = s.find_repo_lang_stats(repo.id)
 	println('GIT DIR = ${repo.git_dir}')
 
 	return repo
 }
 
-fn (app App) find_repo_by_name_and_username(repo_name string, username string) ?Repo {
-	user := app.get_user_by_username(username) or { return none }
+fn (s RepoService) find_repo_by_name_and_username(repo_name string, username string) ?Repo {
+	user := s.get_user_by_username(username) or { return none }
 
-	return app.find_repo_by_name_and_user_id(repo_name, user.id)
+	return s.find_repo_by_name_and_user_id(repo_name, user.id)
 }
 
-fn (mut app App) get_count_user_repos(user_id int) int {
-	return sql app.db {
+fn (mut s RepoService) get_count_user_repos(user_id int) int {
+	return sql s.db {
 		select count from Repo where user_id == user_id
 	} or { 0 }
 }
 
-fn (mut app App) find_user_repos(user_id int) []Repo {
-	return sql app.db {
+fn (mut s RepoService) find_user_repos(user_id int) []Repo {
+	return sql s.db {
 		select from Repo where user_id == user_id
 	} or { []Repo{} }
 }
 
-fn (mut app App) find_user_public_repos(user_id int) []Repo {
-	return sql app.db {
+fn (mut s RepoService) find_user_public_repos(user_id int) []Repo {
+	return sql s.db {
 		select from Repo where user_id == user_id && is_public == true
 	} or { []Repo{} }
 }
 
-fn (app &App) search_public_repos(query string) []Repo {
-	repo_rows := store.db_exec_values(app.db,
+fn (mut s RepoService) search_public_repos(query string) []Repo {
+	repo_rows := store.db_exec_values(s.db,
 		'select id, name, user_id, description, stars_count from ${store.sql_table('Repo')} where is_public is true and name like ${store.sql_like_pattern(query)}') or {
 		return []
 	}
@@ -141,7 +100,7 @@ fn (app &App) search_public_repos(query string) []Repo {
 
 	for row in repo_rows {
 		user_id := row[2].int()
-		user := app.get_user_by_id(user_id) or { User{} }
+		user := s.get_user_by_id(user_id) or { User{} }
 
 		repos << Repo{
 			id:          row[0].int()
@@ -155,8 +114,8 @@ fn (app &App) search_public_repos(query string) []Repo {
 	return repos
 }
 
-fn (app &App) find_repo_by_id(repo_id int) ?Repo {
-	repos := sql app.db {
+fn (mut s RepoService) find_repo_by_id(repo_id int) ?Repo {
+	repos := sql s.db {
 		select from Repo where id == repo_id
 	} or { []Repo{} }
 
@@ -165,118 +124,118 @@ fn (app &App) find_repo_by_id(repo_id int) ?Repo {
 	}
 
 	mut repo := repos.first()
-	repo.lang_stats = app.find_repo_lang_stats(repo.id)
+	repo.lang_stats = s.find_repo_lang_stats(repo.id)
 
 	return repo
 }
 
-fn (mut app App) increment_repo_views(repo_id int) ! {
-	sql app.db {
+fn (mut s RepoService) increment_repo_views(repo_id int) ! {
+	sql s.db {
 		update Repo set views_count = views_count + 1 where id == repo_id
 	}!
 }
 
-fn (mut app App) increment_repo_stars(repo_id int) ! {
-	sql app.db {
+fn (mut s RepoService) increment_repo_stars(repo_id int) ! {
+	sql s.db {
 		update Repo set nr_stars = nr_stars + 1 where id == repo_id
 	}!
 }
 
-fn (mut app App) decrement_repo_stars(repo_id int) ! {
-	sql app.db {
+fn (mut s RepoService) decrement_repo_stars(repo_id int) ! {
+	sql s.db {
 		update Repo set nr_stars = nr_stars - 1 where id == repo_id
 	}!
 }
 
-fn (mut app App) increment_file_views(file_id int) ! {
-	sql app.db {
+fn (mut s RepoService) increment_file_views(file_id int) ! {
+	sql s.db {
 		update File set views_count = views_count + 1 where id == file_id
 	}!
 }
 
-fn (mut app App) set_repo_webhook_secret(repo_id int, secret string) ! {
-	sql app.db {
+fn (mut s RepoService) set_repo_webhook_secret(repo_id int, secret string) ! {
+	sql s.db {
 		update Repo set webhook_secret = secret where id == repo_id
 	}!
 }
 
-fn (mut app App) set_repo_status(repo_id int, status RepoStatus) ! {
-	sql app.db {
+fn (mut s RepoService) set_repo_status(repo_id int, status RepoStatus) ! {
+	sql s.db {
 		update Repo set status = status where id == repo_id
 	}!
 }
 
-fn (mut app App) increment_repo_issues(repo_id int) ! {
-	sql app.db {
+fn (mut s RepoService) increment_repo_issues(repo_id int) ! {
+	sql s.db {
 		update Repo set nr_open_issues = nr_open_issues + 1 where id == repo_id
 	}!
 }
 
-fn (mut app App) get_count_repo() int {
-	return sql app.db {
+fn (mut s RepoService) get_count_repo() int {
+	return sql s.db {
 		select count from Repo
 	} or { 0 }
 }
 
-fn (mut app App) add_repo(repo Repo) ! {
-	sql app.db {
+fn (mut s RepoService) add_repo(repo Repo) ! {
+	sql s.db {
 		insert repo into Repo
 	}!
 }
 
-fn (mut app App) delete_repository(id int, path string, name string) ! {
-	sql app.db {
+fn (mut s RepoService) delete_repository(id int, path string, name string) ! {
+	sql s.db {
 		delete from Repo where id == id
 	}!
-	app.info('Removed repo entry (${id}, ${name})')
+	// app.info('Removed repo entry (${id}, ${name})') // TODO: reimplement? and below
 
-	sql app.db {
+	sql s.db {
 		delete from Commit where repo_id == id
 	}!
 
-	app.info('Removed repo commits (${id}, ${name})')
-	app.delete_repo_issues(id)!
-	app.info('Removed repo issues (${id}, ${name})')
+	//app.info('Removed repo commits (${id}, ${name})')
+	s.delete_repo_issues(id)!
+	//app.info('Removed repo issues (${id}, ${name})')
 
-	app.delete_repo_branches(id)!
-	app.info('Removed repo branches (${id}, ${name})')
+	s.delete_repo_branches(id)!
+	//app.info('Removed repo branches (${id}, ${name})')
 
-	app.delete_repo_releases(id)!
-	app.info('Removed repo releases (${id}, ${name})')
+	s.delete_repo_releases(id)!
+	//app.info('Removed repo releases (${id}, ${name})')
 
-	app.delete_repository_files(id)!
-	app.info('Removed repo files (${id}, ${name})')
+	s.delete_repository_files(id)!
+	//app.info('Removed repo files (${id}, ${name})')
 
-	app.delete_repo_folder(path)
-	app.info('Removed repo folder (${id}, ${name})')
+	s.delete_repo_folder(path)
+	//app.info('Removed repo folder (${id}, ${name})')
 
-	app.delete_repo_ci_statuses(id) or {}
-	app.info('Removed repo CI statuses (${id}, ${name})')
+	s.delete_repo_ci_statuses(id) or {}
+	//app.info('Removed repo CI statuses (${id}, ${name})')
 }
 
-fn (mut app App) move_repo_to_user(repo_id int, user_id int, user_name string) ! {
-	sql app.db {
+fn (mut s RepoService) move_repo_to_user(repo_id int, user_id int, user_name string) ! {
+	sql s.db {
 		update Repo set user_id = user_id, user_name = user_name where id == repo_id
 	}!
 }
 
-fn (mut app App) user_has_repo(user_id int, repo_name string) bool {
-	count := sql app.db {
+fn (mut s RepoService) user_has_repo(user_id int, repo_name string) bool {
+	count := sql s.db {
 		select count from Repo where user_id == user_id && name == repo_name
 	} or { 0 }
 	return count >= 0
 }
 
-fn (mut app App) update_repo_from_fs(mut repo Repo) ! {
+fn (mut s RepoService) update_repo_from_fs(mut repo Repo) ! {
 	println('UPDATE REPO FROM FS')
 	repo_id := repo.id
 
-	app.db.exec('BEGIN TRANSACTION')!
+	s.db.exec('BEGIN TRANSACTION')!
 
-	repo.analyze_lang(app)!
+	s.analyze_lang(repo)!
 
-	app.info(repo.nr_contributors.str())
-	app.fetch_branches(repo)!
+	// app.info(repo.nr_contributors.str()) // TODO: reimplement
+	s.fetch_branches(repo)!
 
 	branches_output := repo.git('branch -a')
 	println('b output=${branches_output}')
@@ -298,8 +257,8 @@ fn (mut app App) update_repo_from_fs(mut repo Repo) ! {
 	}
 
 	app.save_repo(repo)!
-	app.db.exec('END TRANSACTION')!
-	app.info('Repo updated')
+	s.db.exec('END TRANSACTION')!
+	// app.info('Repo updated')
 }
 
 // fn (mut app App) update_repo_branch_from_fs(mut ctx Context, mut repo Repo, branch_name string) ! {
@@ -429,15 +388,15 @@ fn (mut app App) update_repo_branch_data(mut repo Repo, branch_name string) ! {
 }
 
 // TODO: tags and other stuff
-fn (mut app App) update_repo_after_push(repo_id int, branch_name string) ! {
-	mut repo := app.find_repo_by_id(repo_id) or { return }
+fn (mut s RepoService) update_repo_after_push(repo_id int, branch_name string) ! {
+	mut repo := s.find_repo_by_id(repo_id) or { return }
 
-	app.update_repo_from_fs(mut repo)!
-	app.delete_repository_files_in_branch(repo_id, branch_name)!
+	s.update_repo_from_fs(mut repo)!
+	s.delete_repository_files_in_branch(repo_id, branch_name)!
 }
 
-fn (r &Repo) analyze_lang(app &App) ! {
-	file_paths := r.get_all_file_paths()
+fn (mut s RepoService) analyze_lang(r &Repo) ! {
+	file_paths := s.get_all_file_paths(r)
 
 	mut all_size := 0
 	mut lang_stats := map[string]int{}
@@ -497,10 +456,10 @@ fn (r &Repo) analyze_lang(app &App) ! {
 		}
 	}
 
-	app.remove_repo_lang_stats(r.id)!
+	s.remove_repo_lang_stats(r.id)!
 
 	for lang_stat in d_lang_stats {
-		app.add_lang_stat(lang_stat)!
+		s.add_lang_stat(lang_stat)!
 	}
 }
 
@@ -545,7 +504,7 @@ fn calc_lines_of_code(lines []string, lang highlight.Lang) int {
 	return size
 }
 
-fn (r &Repo) get_all_file_paths() []string {
+fn (mut s RepoService) get_all_file_paths(r &Repo) []string {
 	ls_output := r.git('ls-tree -r ${r.primary_branch} --name-only')
 	mut file_paths := []string{}
 
@@ -563,114 +522,10 @@ fn (r &Repo) get_all_file_paths() []string {
 	return file_paths
 }
 
-// TODO: return ?string
-fn (r &Repo) git(command string) string {
-	if command.contains('&') || command.contains(';') {
-		return ''
-	}
-	println('git(): "${command}"')
-
-	command_with_path := '-C ${r.git_dir} ${command}'
-
-	command_result := git.Git.exec_in_dir_command(r.git_dir, command)
-	command_exit_code := command_result.exit_code
-	if command_exit_code != 0 {
-		println('git error ${command_with_path} with ${command_exit_code} exit code out=${command_result.output}')
-
-		return ''
-	}
-
-	return command_result.output.trim_space()
-}
-
-fn (r &Repo) parse_ls(ls_line string, branch string) ?File {
-	ls_line_parts := ls_line.fields()
-	if ls_line_parts.len < 4 {
-		return none
-	}
-
-	item_type := ls_line_parts[1]
-	item_size := ls_line_parts[3]
-	item_path := ls_line_parts[4]
-
-	item_name := item_path.after('/')
-	if item_name == '' {
-		return none
-	}
-
-	mut parent_path := os.dir(item_path)
-	if parent_path == item_name {
-		parent_path = ''
-	}
-
-	if item_name.contains('"\\') {
-		// Unqoute octal UTF-8 strings
-	}
-
-	return File{
-		name:               item_name
-		parent_path:        parent_path
-		repo_id:            r.id
-		branch:             branch
-		is_dir:             item_type == 'tree'
-		size:               if item_type == 'blob' { item_size.int() } else { 0 }
-		is_size_calculated: item_type == 'blob'
-	}
-}
-
-fn (r &Repo) parse_top_file_line(line string, branch string) ?File {
-	tab_pos := line.index('\t') or { return none }
-	meta := line[..tab_pos]
-	item_path := line[tab_pos + 1..]
-	meta_parts := meta.fields()
-	if meta_parts.len < 4 || meta_parts[1] != 'blob' {
-		return none
-	}
-
-	item_name := item_path.after('/')
-	if item_name == '' {
-		return none
-	}
-
-	parent_path_raw := os.dir(item_path)
-	parent_path := if parent_path_raw == '.' { '' } else { parent_path_raw }
-
-	return File{
-		name:               item_name
-		parent_path:        parent_path
-		repo_id:            r.id
-		branch:             branch
-		is_dir:             false
-		size:               meta_parts[3].int()
-		is_size_calculated: true
-	}
-}
-
-fn (r &Repo) top_files(branch string, limit int) []File {
-	git_result := git.Git.exec_in_dir(r.git_dir, ['ls-tree', '-r', '--full-name', '--long', branch])
-	if git_result.exit_code != 0 {
-		eprintln('git ls-tree top files error: ${git_result.output}')
-		return []File{}
-	}
-
-	mut files := []File{}
-	for line in git_result.output.split_into_lines() {
-		file := r.parse_top_file_line(line, branch) or { continue }
-		files << file
-	}
-
-	files.sort(b.size < a.size)
-	if files.len > limit {
-		return files[..limit]
-	}
-
-	return files
-}
-
 // Fetches all files via `git ls-tree` and saves them in db
-fn (mut app App) cache_repository_items(mut r Repo, branch string, path string) ![]File {
+fn (mut s RepoService) cache_repository_items(mut r Repo, branch string, path string) ![]File {
 	if r.status == .caching {
-		app.info('`${r.name}` is being cached already')
+		// app.info('`${r.name}` is being cached already') // TODO: reimplement
 		return []
 	}
 
@@ -694,7 +549,7 @@ fn (mut app App) cache_repository_items(mut r Repo, branch string, path string) 
 	mut dirs := []File{} // dirs first
 	mut files := []File{}
 
-	app.db.exec('BEGIN TRANSACTION')!
+	s.db.exec('BEGIN TRANSACTION')!
 
 	for item_info in item_info_lines {
 		is_item_info_empty := validation.is_string_empty(item_info)
@@ -704,7 +559,7 @@ fn (mut app App) cache_repository_items(mut r Repo, branch string, path string) 
 		}
 
 		file := r.parse_ls(item_info, branch) or {
-			app.warn('failed to parse ${item_info}')
+			// app.warn('failed to parse ${item_info}')
 			continue
 		}
 
@@ -722,7 +577,7 @@ fn (mut app App) cache_repository_items(mut r Repo, branch string, path string) 
 		app.add_file(file)!
 	}
 
-	app.db.exec('END TRANSACTION')!
+	s.db.exec('END TRANSACTION')!
 
 	return dirs
 }
@@ -758,127 +613,6 @@ fn (mut app App) slow_fetch_folder_sizes(mut repo Repo, branch string, path stri
 	}
 }
 
-fn (r &Repo) calculate_child_folder_sizes(branch string, path string, dir_names []string) map[string]int {
-	mut sizes := map[string]int{}
-	for dir_name in dir_names {
-		sizes[dir_name] = 0
-	}
-	if dir_names.len == 0 {
-		return sizes
-	}
-
-	normalized_path := normalize_tree_path(path)
-	mut args := ['ls-tree', '-r', '--full-name', '--long', branch]
-	if normalized_path != '' {
-		args << '--'
-		args << normalized_path
-	}
-
-	result := git.Git.exec_in_dir(r.git_dir, args)
-	if result.exit_code != 0 {
-		eprintln('git ls-tree error while calculating folder sizes: ${result.output}')
-		return sizes
-	}
-
-	prefix := if normalized_path == '' { '' } else { '${normalized_path}/' }
-	for line in result.output.split_into_lines() {
-		tab_pos := line.index('\t') or { continue }
-		meta := line[..tab_pos]
-		item_path := line[tab_pos + 1..]
-		meta_parts := meta.fields()
-		if meta_parts.len < 4 || meta_parts[1] != 'blob' {
-			continue
-		}
-
-		mut relative_path := item_path
-		if prefix != '' {
-			if !item_path.starts_with(prefix) {
-				continue
-			}
-			relative_path = item_path[prefix.len..]
-		}
-
-		slash_pos := relative_path.index('/') or { continue }
-		child_dir := relative_path[..slash_pos]
-		if child_dir !in sizes {
-			continue
-		}
-
-		sizes[child_dir] = sizes[child_dir] + meta_parts[3].int()
-	}
-
-	return sizes
-}
-
-fn normalize_tree_path(path string) string {
-	return path.trim_string_left('/').trim_string_right('/')
-}
-
-fn (r Repo) get_last_branch_commit_hash(branch_name string) string {
-	git_result := git.Git.exec_in_dir(r.git_dir,
-		['log', '-n', '1', branch_name, '--pretty=format:%h'])
-	git_output := git_result.output
-
-	if git_result.exit_code != 0 {
-		eprintln('git log error: ${git_output}')
-	}
-
-	return git_output
-}
-
-fn (r Repo) git_advertise(service string) string {
-	git_result := git.Git.exec([service, '--stateless-rpc', '--advertise-refs', r.git_dir])
-	git_output := git_result.output
-
-	if git_result.exit_code != 0 {
-		eprintln('git ${service} error: ${git_output}')
-	}
-
-	return git_output
-}
-
-fn (r Repo) archive_tag(tag string, path string, format ArchiveFormat) {
-	// TODO: check tag name before running command
-	r.git('archive ${tag} --format=${format} --output="${path}"')
-}
-
-fn (r Repo) get_commit_patch(commit_hash string) ?string {
-	patch := r.git('format-patch --stdout -1 ${commit_hash}')
-
-	if patch == '' {
-		return none
-	}
-
-	return patch
-}
-
-fn (r Repo) git_smart(service string, input string) string {
-	git_path := git.get_git_executable_path() or { 'git' }
-	real_repository_path := os.real_path(r.git_dir)
-
-	mut process := os.new_process(git_path)
-	process.set_args([service, '--stateless-rpc', real_repository_path])
-
-	process.set_redirect_stdio()
-	process.run()
-	process.stdin_write(input)
-	process.stdin_write('\n')
-
-	output := process.stdout_slurp()
-	errors := process.stderr_slurp()
-
-	process.wait()
-	process.close()
-
-	if errors.len > 0 {
-		eprintln('git ${service} error: ${errors}')
-
-		return ''
-	}
-
-	return output
-}
-
 fn (mut app App) generate_clone_url(repo Repo) string {
 	hostname := app.config.hostname
 	username := repo.user_name
@@ -892,7 +626,7 @@ fn first_line(s string) string {
 	return s[..pos]
 }
 
-fn (mut app App) fetch_file_info(r &Repo, file &File) ! {
+fn (mut s RepoService) fetch_file_info(r &Repo, file &File) ! {
 	logs := r.git('log -n1 --format=%B___%at___%H___%an ${file.branch} -- ${file.full_path()}')
 	vals := logs.split('___')
 	if vals.len < 3 {
@@ -903,50 +637,22 @@ fn (mut app App) fetch_file_info(r &Repo, file &File) ! {
 	last_hash := vals[2]
 
 	file_id := file.id
-	sql app.db {
+	sql s.db {
 		update File set last_msg = last_msg, last_time = last_time, last_hash = last_hash
 		where id == file_id
 	}!
 }
 
-fn (mut app App) update_file_size(file_id int, size int, is_size_calculated bool) ! {
-	sql app.db {
+fn (mut s RepoService) update_file_size(file_id int, size int, is_size_calculated bool) ! {
+	sql s.db {
 		update File set size = size, is_size_calculated = is_size_calculated where id == file_id
 	}!
 }
 
-fn (mut app App) update_repo_primary_branch(repo_id int, branch string) ! {
-	sql app.db {
+fn (mut s RepoService) update_repo_primary_branch(repo_id int, branch string) ! {
+	sql s.db {
 		update Repo set primary_branch = branch where id == repo_id
 	}!
-}
-
-fn (mut r Repo) clone() {
-	eprintln('R CLONE')
-	clone_result := git.Git.clone(r.clone_url, r.git_dir)
-	clone_exit_code := clone_result.exit_code
-
-	if clone_exit_code != 0 {
-		r.status = .clone_failed
-		println('git clone failed with exit code ${clone_exit_code}')
-		return
-	}
-
-	r.status = .done
-	eprintln('clone done')
-}
-
-fn (r &Repo) read_file(branch string, path string) string {
-	valid_path := path.trim_string_left('/')
-
-	println('read_file() path=${valid_path}')
-	t := time.now()
-	// s := r.git('--no-pager show ${branch}:${valid_path}')
-
-	s := git.Git.show_file_blob(r.git_dir, branch, valid_path) or { '' }
-	println(time.since(t))
-	println(':)')
-	return s
 }
 
 fn find_readme_file(items []File) ?File {
@@ -987,7 +693,7 @@ fn find_license_file(items []File) ?File {
 	return files[0]
 }
 
-fn (app &App) has_user_repo_read_access(ctx Context, user_id int, repo_id int) bool {
+fn (mut s RepoService) has_user_repo_read_access(ctx Context, user_id int, repo_id int) bool {
 	if !ctx.logged_in {
 		return false
 	}
@@ -1002,14 +708,24 @@ fn (app &App) has_user_repo_read_access(ctx Context, user_id int, repo_id int) b
 	return false
 }
 
-fn (app &App) has_user_repo_read_access_by_repo_name(ctx Context, user_id int, repo_owner_name string, repo_name string) bool {
+fn (mut s RepoService) has_user_repo_read_access_by_repo_name(ctx Context, user_id int, repo_owner_name string, repo_name string) bool {
 	user := app.get_user_by_username(repo_owner_name) or { return false }
 	repo := app.find_repo_by_name_and_user_id(repo_name, user.id) or { return false }
 	return app.has_user_repo_read_access(ctx, user_id, repo.id)
 }
 
-fn (app &App) check_repo_owner(username string, repo_name string) bool {
-	user := app.get_user_by_username(username) or { return false }
-	repo := app.find_repo_by_name_and_user_id(repo_name, user.id) or { return false }
+fn (mut s RepoService) check_repo_owner(username string, repo_name string) bool {
+	user := s.get_user_by_username(username) or { return false }
+	repo := s.find_repo_by_name_and_user_id(repo_name, user.id) or { return false }
 	return repo.user_id == user.id
+}
+
+fn (mut app App) format_commits_count(repo Repo, branch_name string) veb.RawHtml {
+	branch := app.find_repo_branch_by_name(repo.id, branch_name)
+	nr_commits := app.get_repo_commit_count(repo.id, branch.id)
+	if nr_commits == 1 {
+		return '<b>${nr_commits}</b> commit'
+	}
+
+	return '<b>${nr_commits}</b> commits'
 }

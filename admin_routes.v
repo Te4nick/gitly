@@ -22,9 +22,10 @@ pub fn (mut app App) handle_admin_update_settings(oauth_client_id string, oauth_
 	}
 
 	tree_folder_size_enabled := 'tree_folder_size_enabled' in ctx.form
-	app.update_gitly_settings(oauth_client_id, oauth_client_secret, tree_folder_size_enabled) or {
+	app.update_settings(oauth_client_id, oauth_client_secret, tree_folder_size_enabled) or {
 		app.info(err.str())
 	}
+	app.load_settings()
 
 	return ctx.redirect('/admin')
 }
@@ -39,7 +40,7 @@ pub fn (mut app App) handle_admin_edit_user(user_id string) veb.Result {
 	is_blocked := 'is-blocked' in ctx.form
 	is_admin := 'is-admin' in ctx.form
 
-	app.edit_user(user_id.int(), clear_session, is_blocked, is_admin) or { app.info(err.str()) }
+	app.service.admin.edit_user(user_id.int(), clear_session, is_blocked, is_admin) or { app.info(err.str()) }
 
 	return ctx.redirect('/admin')
 }
@@ -56,9 +57,9 @@ pub fn (mut app App) admin_users(mut ctx Context, page string) veb.Result {
 	}
 
 	page_i := page.int()
-	user_count := app.get_all_registered_user_count()
+	user_count := app.service.user.get_all_registered_user_count()
 	offset := admin_users_per_page * page_i
-	users := app.get_all_registered_users_as_page(offset)
+	users := app.service.user.get_all_registered_users_as_page(offset)
 	page_count := calculate_pages(user_count, admin_users_per_page)
 	is_first_page := check_first_page(page_i)
 	is_last_page := check_last_page(user_count, offset, admin_users_per_page)

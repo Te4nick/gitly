@@ -23,12 +23,12 @@ pub fn (mut app App) handle_login(mut ctx Context, username string, password str
 	if username == '' || password == '' {
 		return ctx.redirect_to_login()
 	}
-	user := app.get_user_by_username(username) or { return ctx.redirect_to_login() }
+	user := app.service.user.get_user_by_username(username) or { return ctx.redirect_to_login() }
 	if user.is_blocked {
 		return ctx.redirect_to_login()
 	}
 	if !compare_password_with_hash(password, user.salt, user.password) {
-		app.increment_user_login_attempts(user.id) or {
+		app.service.user.increment_user_login_attempts(user.id) or {
 			ctx.error('There was an error while logging in')
 			return app.login(mut ctx)
 		}
@@ -68,7 +68,7 @@ pub fn (mut app App) user(mut ctx Context, username string) veb.Result {
 	} else {
 		app.find_user_public_repos(user.id)
 	}
-	activities := app.find_activities(user.id)
+	activities := app.service.activity.find_activities(user.id)
 	return $veb.html()
 }
 

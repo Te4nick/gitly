@@ -13,10 +13,13 @@ RUN apk add --no-cache build-base git libpq-dev sassc sqlite-dev openssl-dev lin
     && make -C "${VROOT}" \
     && v symlink
 
+COPY v.mod /src/
+
+RUN v install
+
 COPY . /src/
 
-RUN v install markdown \
-    && v build.vsh \
+RUN v build.vsh \
     && cp ./src ./gitly
 
 FROM alpine:3.20

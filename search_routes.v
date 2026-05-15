@@ -2,6 +2,7 @@ module main
 
 import veb
 import regex
+import model {User}
 
 @['/search']
 pub fn (mut app App) search() veb.Result {
@@ -19,7 +20,7 @@ pub fn (mut app App) search() veb.Result {
 	}
 
 	users := if search_type == 'users' {
-		app.search_users(valid_query)
+		app.service.user.search_users(valid_query)
 	} else {
 		[]User{}
 	}

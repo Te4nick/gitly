@@ -293,9 +293,9 @@ pub fn (mut app App) handle_new_repo(mut ctx Context, name string, clone_url str
 	if no_redirect == '1' {
 		return ctx.text('ok')
 	}
-	has_first_repo_activity := app.has_activity(ctx.user.id, 'first_repo')
+	has_first_repo_activity := app.service.activity.has_activity(ctx.user.id, 'first_repo')
 	if !has_first_repo_activity {
-		app.add_activity(ctx.user.id, 'first_repo') or { app.info(err.str()) }
+		app.service.activity.add_activity(ctx.user.id, 'first_repo') or { app.info(err.str()) }
 	}
 	return ctx.redirect('/${ctx.user.username}/${new_repo.name}')
 }

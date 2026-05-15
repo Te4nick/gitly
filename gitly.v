@@ -9,6 +9,8 @@ import log
 import api
 import config
 import git
+import model
+import service
 import store
 
 const commits_per_page = 35
@@ -33,6 +35,7 @@ mut:
 	logger     log.Log
 	config     config.Config
 	settings   Settings
+	service    service.Service
 	port       int
 	clone_urls map[int]string
 }
@@ -40,7 +43,7 @@ mut:
 pub struct Context {
 	veb.Context
 mut:
-	user          User
+	user          model.User
 	current_path  string
 	page_gen_time string
 	is_tree       bool
@@ -58,9 +61,12 @@ fn new_app() !&App {
 		panic('Config not found or has syntax errors')
 	}
 
+	db := store.connect_db(conf)!
+
 	mut app := &App{
 		// db: sqlite.connect('gitly.sqlite') or { panic(err) }
-		db:         store.connect_db(conf)!
+		db:         db
+		service:    service.new_service(db)!
 		config:     conf
 		started_at: time.now().unix()
 		clone_urls: map[int]string{}
@@ -106,7 +112,7 @@ fn new_app() !&App {
 	create_directory_if_not_exists(app.config.avatars_path)
 
 	// Create the first admin user if the db is empty
-	app.get_user_by_id(1) or {}
+	app.service.user.get_user_by_id(1) or {}
 
 	if '-cmdapi' in os.args {
 		spawn app.command_fetcher()
@@ -154,7 +160,7 @@ pub fn (mut app App) before_request(mut ctx Context) bool {
 	if ctx.logged_in {
 		ctx.user = app.get_user_from_cookies(ctx) or {
 			ctx.logged_in = false
-			User{}
+			model.User{}
 		}
 	}
 	$if trace_prealloc ? {
@@ -171,7 +177,7 @@ pub fn (mut app App) before_request(mut ctx Context) bool {
 
 @['/']
 pub fn (mut app App) index() veb.Result {
-	user_count := app.get_users_count() or { 0 }
+	user_count := app.service.user.get_users_count() or { 0 }
 	no_users := user_count == 0
 	if no_users {
 		return ctx.redirect('/register')
@@ -222,16 +228,16 @@ fn (mut app App) create_tables() ! {
 		create table LangStat
 	}!
 	sql app.db {
-		create table User
+		create table model.User
 	}!
 	sql app.db {
-		create table Email
+		create table model.Email
 	}!
 	sql app.db {
-		create table Contributor
+		create table model.Contributor
 	}!
 	sql app.db {
-		create table Activity
+		create table model.Activity
 	}!
 	sql app.db {
 		create table Tag
@@ -240,7 +246,7 @@ fn (mut app App) create_tables() ! {
 		create table Release
 	}!
 	sql app.db {
-		create table SshKey
+		create table model.SshKey
 	}!
 	sql app.db {
 		create table Comment
@@ -252,7 +258,7 @@ fn (mut app App) create_tables() ! {
 		create table Settings
 	}!
 	sql app.db {
-		create table Token
+		create table model.Token
 	}!
 	sql app.db {
 		create table SecurityLog
@@ -314,4 +320,33 @@ fn (mut ctx Context) page_gen_time() string {
 	} else {
 		'${diff}ms'
 	}
+}
+
+fn (mut ctx Context) is_admin() bool {
+	return ctx.logged_in && ctx.user.is_admin
+}
+
+pub fn (mut app App) auth_user(mut ctx Context, user model.User, ip string) ! {
+	token := app.service.user.add_token(user.id, ip)!
+	app.service.user.update_user_login_attempts(user.id, 0)!
+	expire_date := time.now().add_days(200)
+	ctx.set_cookie(name: 'token', value: token, expires: expire_date)
+}
+
+pub fn (mut app App) is_logged_in(mut ctx Context) bool {
+	token_cookie := ctx.get_cookie('token') or { return false }
+	token := app.service.user.get_token(token_cookie) or { return false }
+	is_user_blocked := app.service.user.check_user_blocked(token.user_id)
+	if is_user_blocked {
+		app.handle_logout(mut ctx)
+		return false
+	}
+	return true
+}
+
+pub fn (mut app App) get_user_from_cookies(ctx &Context) ?model.User {
+	token_cookie := ctx.get_cookie('token') or { return none }
+	token := app.service.user.get_token(token_cookie) or { return none }
+	mut user := app.service.user.get_user_by_id(token.user_id) or { return none }
+	return user
 }

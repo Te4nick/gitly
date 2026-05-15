@@ -4,6 +4,7 @@ import veb
 import validation
 import api
 
+
 @['/:username/settings/ssh-keys']
 pub fn (mut app App) user_ssh_keys_list(mut ctx Context, username string) veb.Result {
 	is_users_settings := username == ctx.user.username
@@ -12,7 +13,7 @@ pub fn (mut app App) user_ssh_keys_list(mut ctx Context, username string) veb.Re
 		return ctx.redirect_to_index()
 	}
 
-	ssh_keys := app.find_ssh_keys(ctx.user.id)
+	ssh_keys := app.service.ssh.find_ssh_keys(ctx.user.id)
 
 	return $veb.html('templates/user/ssh/keys/list.html')
 }
@@ -43,7 +44,7 @@ pub fn (mut app App) handle_add_ssh_key(mut ctx Context, username string) veb.Re
 		return app.user_ssh_keys_new(mut ctx, username)
 	}
 
-	app.add_ssh_key(ctx.user.id, title, ssh_key) or {
+	app.service.ssh.add_ssh_key(ctx.user.id, title, ssh_key) or {
 		ctx.error(err.str())
 
 		return app.user_ssh_keys_new(mut ctx, username)
@@ -60,7 +61,7 @@ pub fn (mut app App) handle_remove_ssh_key(mut ctx Context, username string, id 
 		return ctx.redirect_to_index()
 	}
 
-	app.remove_ssh_key(ctx.user.id, id.int()) or {
+	app.service.ssh.remove_ssh_key(ctx.user.id, id.int()) or {
 		response := api.ApiErrorResponse{
 			message: 'There was an error while deleting the SSH key'
 		}
